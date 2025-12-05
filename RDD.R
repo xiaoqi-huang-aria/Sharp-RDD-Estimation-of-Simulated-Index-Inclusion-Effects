@@ -1,6 +1,7 @@
 library(rdrobust)
 library(dplyr)
 library(ggplot2)
+library(rddensity)
 
 set.seed(42)
 
@@ -60,13 +61,30 @@ cat("### Summary Statistics Table (Simulated Data, |Rank| <= 100)\n")
 print(summary_stats)
 cat("\n")
 
-# RDD Estimation
+# Plot Mean CAR
+plot_data_car <- summary_stats %>%
+  select(Group, Mean_CAR)
 
-# Run rdrobust to estimate LATE
+ggplot(plot_data_car, aes(x = Group, y = Mean_CAR, fill = Group)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = round(Mean_CAR, 4)), 
+            vjust = -0.5, size = 4.5) +
+  scale_fill_manual(values = c(
+    "Control (R1000, X < 0)" = "#8FB8DE",
+    "Treatment (R2000, X >= 0)" = "#F4A582")) +
+  labs(
+    x = "",
+    y = "Mean CAR"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+
+# RDD Estimation
 # - c=0: Cutoff (Standardized Rank 1000)
-# - p=1: Local Linear Regression is the preferred specification [1, 2]
-# - kernel="triangular": Standard kernel for RDD [3]
-# - h: Optimal bandwidth selection (CCT MSE-optimal bandwidth [4]) is automatic
+# - p=1: Local Linear Regression is the preferred specification
+# - kernel="triangular": Standard kernel for RDD
+# - h: Optimal bandwidth selection (CCT MSE-optimal bandwidth) is automatic
 rdd_estimate <- rdrobust(
   y = df_rdd$CAR,
   x = df_rdd$Rank,
@@ -98,14 +116,14 @@ cat("Bandwidth (Robust):  ", format(bw_robust, digits=4), "\n")
 cat("Effective N:         ", rdd_estimate$N_h[1] + rdd_estimate$N_h[2], "\n")
 
 # RDD Plot
-cat("### RDD Plot (Visualizing the Discontinuity at Cutoff)\n")
+cat("### RDD Plot (Discontinuity at Cutoff)\n")
 rdd_plot_output <- rdplot(
   y = df_rdd$CAR, 
   x = df_rdd$Rank, 
   c = cutoff_c,
-  title = "Figure 1: Cumulative Abnormal Returns at Russell 1000/2000 Cutoff",
-  x.label = "Standardized Market Cap Rank (X_i, Cutoff = 0)",
-  y.label = "Cumulative Abnormal Returns (Y_i)",
+  title = "",
+  x.label = "Standardized Market Cap Rank",
+  y.label = "Cumulative Abnormal Returns",
   p = 1, # Local Linear Regression fit
   kernel = "triangular")
 
@@ -156,31 +174,30 @@ balance_table <- data.frame(
     format(bal$h, digits=4)))
 print(balance_table)
 
-placebo_cutoff <- 80
+cat("\n### Robustness Check B: Multiple Placebo Cutoffs\n")
 
-rdd_placebo <- rdrobust(
-  y = df_rdd$CAR,
-  x = X,
-  c = placebo_cutoff,
-  p = 1,
-  kernel = "triangular"
-)
+placebo_cutoffs <- c(-120, -80, -40, 40, 80, 120)
+placebo_results <- data.frame()
 
-pl <- extract_rd_results(rdd_placebo)
+for (pc in placebo_cutoffs) {
+  if (pc >= min(X) && pc <= max(X)) {
+    rdd_p <- rdrobust(y = df_rdd$CAR, x = X, c = pc, p = 1, kernel = "triangular")
+    pl <- extract_rd_results(rdd_p)
+    placebo_results <- rbind(placebo_results, data.frame(
+      Cutoff = pc,
+      tau_Placebo = pl$tau,
+      Robust_SE = pl$se,
+      p_value = pl$p,
+      Bandwidth = pl$h))}}
 
-cat("\n### Robustness Check B: Placebo Cutoff at 80\n")
-placebo_table <- data.frame(
-  Metric = c("Placebo τ", "Robust SE", "z-value", "p-value", "95% CI", "h"),
-  Value  = c(
-    format(pl$tau, digits=4),
-    format(pl$se, digits=4),
-    format(pl$z, digits=4),
-    format(pl$p, digits=4),
-    paste0("[", format(pl$ci_l, digits=4), ", ", format(pl$ci_u, digits=4), "]"),
-    format(pl$h, digits=4)))
-print(placebo_table)
+placebo_results$tau_Placebo <- format(placebo_results$tau_Placebo, digits=3)
+placebo_results$Robust_SE <- format(placebo_results$Robust_SE, digits=3)
+placebo_results$p_value <- format(placebo_results$p_value, digits=3)
+placebo_results$Bandwidth <- format(placebo_results$Bandwidth, digits=3)
 
-library(rddensity)
+print(placebo_results)
+
 # McCrary Density Test at cutoff
 mcc <- rddensity(X, c = cutoff_c)
+cat("\n### Robustness Check C: McCrary Density Test\n")
 summary(mcc)
